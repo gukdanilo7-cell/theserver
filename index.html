@@ -35,6 +35,14 @@
     image-rendering: pixelated;
   }
   #weapon img.active { display: block; }
+  /* MONO v2: проста слайд-анімація віддачі (при кожному пострілі) */
+  #weapon { --vmk: 1; }
+  #weapon.zoomed { --vmk: 0.55; }
+  @keyframes vmSlide {
+    0%   { transform: translate(calc(2.4% * var(--vmk)), calc(1.8% * var(--vmk))); filter: brightness(1.8); }
+    60%  { filter: brightness(1.25); }
+    100% { transform: translate(0, 0); filter: brightness(1); }
+  }
 
   #crosshair {
     position: absolute;
@@ -266,8 +274,8 @@
     <div id="frList" class="frlist"></div>
     <button class="btn" data-go="back">BACK</button></div>
   <div class="sc" id="scCoop"><h2>CO-OP LOBBY</h2>
-    <small>Запусти <b>node server.js</b> на ПК-хості. Друзі підключаються по IP:порт.</small>
-    <input id="coopServer" placeholder="ws://127.0.0.1:8765" maxlength="80">
+    <small>Сервер: <b>wss://theserver-e009.onrender.com</b> — підключення автоматичне. Хост: CREATE ROOM → дай код друзям.</small>
+    <input id="coopServer" placeholder="wss://theserver-e009.onrender.com" maxlength="80">
     <input id="coopName" placeholder="Your name" maxlength="16">
     <div class="row">
       <button class="btn" data-a="coopConnect">CONNECT</button>
@@ -1926,7 +1934,8 @@ menuEl.addEventListener('click', e => {
   if (m) { selMap = +m; menuEl.querySelectorAll('.chip[data-m]').forEach(c => c.classList.toggle('on', c.dataset.m === m)); saveSel(); }
   if (mode) { selMode = mode; menuEl.querySelectorAll('.chip[data-mode]').forEach(c => c.classList.toggle('on', c.dataset.mode === mode)); saveSel(); }
   if (go === 'back') showScreen(prevScr);
-  else if (go) { prevScr = scr; showScreen(go); if (go === 'Friends') { $('myCode').textContent = myCode; renderFriends(); } }
+  else if (go) { prevScr = scr; showScreen(go); if (go === 'Friends') { $('myCode').textContent = myCode; renderFriends(); }
+    if (go === 'Coop' && (!net.ws || net.ws.readyState >= 2)) netConnect(); }
   if (a === 'play') startGame(selMap);
   if (a === 'restart') startGame(mapNum);
   if (a === 'resume') { showScreen(null); goFullscreen(); requestLock(); }
@@ -2024,12 +2033,14 @@ let net = {
   peers: new Map(),   // id → { mesh, name, last }
   posT: 0
 };
+const DEF_SERVER = 'wss://theserver-e009.onrender.com';
 try {
   const saved = localStorage.getItem('fps_coop_url');
-  if (saved && $('coopServer')) $('coopServer').value = saved;
-  else if ($('coopServer')) $('coopServer').value = 'ws://127.0.0.1:8765';
+  if ($('coopServer')) $('coopServer').value = (saved && saved !== 'ws://127.0.0.1:8765') ? saved : DEF_SERVER;
   if ($('coopName')) $('coopName').value = localStorage.getItem('fps_coop_name') || 'Player';
 } catch (e) {}
+// MONO v2: автоматичне підключення до сервера одразу при завантаженні гри
+try { netConnect(); } catch (e) {}
 
 function netSetStatus(s, color) {
   const el = $('coopStatus');
@@ -2054,8 +2065,8 @@ function netSend(obj) {
   if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify(obj));
 }
 function netConnect() {
-  let url = ($('coopServer') && $('coopServer').value.trim()) || 'ws://127.0.0.1:8765';
-  if (!/^wss?:\/\//i.test(url)) url = 'ws://' + url;
+  let url = ($('coopServer') && $('coopServer').value.trim()) || DEF_SERVER;
+  if (!/^wss?:\/\//i.test(url)) url = (/^(localhost|127\.)/i.test(url) ? 'ws://' : 'wss://') + url;
   try { localStorage.setItem('fps_coop_url', url); } catch (e) {}
   const name = (($('coopName') && $('coopName').value.trim()) || 'Player').slice(0, 16);
   try { localStorage.setItem('fps_coop_name', name); } catch (e) {}
@@ -2522,9 +2533,18 @@ let nadeActive = false;   // throw animation is playing
 let nadeHeld = false;     // grenade is in hand, waiting for the click
 let nadeSeqIdx = 0, nadeSeqTimer = 0, nadeHeldFrame = 0, nadeHeldTimer = 0;
 
+let shotParity = 0;   // 1 = кадр пострілу, 0 = кадр спокою — чергуються, поки тримаєш FIRE
 function showImg(im) {
   for (const i of allVimgs) i.classList.remove('active');
   if (im) im.classList.add('active');
+}
+function vmFireFX() {   // MONO v2: проста слайд-анімація (віддача) активної зброї
+  const im = weapon.querySelector('img.active');
+  if (!im) return;
+  shotParity = 1;                       // кожен новий постріл починається з кадру пострілу
+  im.style.animation = 'none';
+  void im.offsetWidth;                  // перезапуск keyframes
+  im.style.animation = 'vmSlide ' + (curW === 'shotgun' ? '0.14s' : '0.09s') + ' ease-out';
 }
 function idleOrZoom() { return (isZooming && VMI[curW].zoom) ? 'zoom' : 'idle'; }
 function play(name, force) {
@@ -2573,7 +2593,7 @@ function updateAnim(dt) {
       return;
     }
     if (currentAnim === 'shoot' || currentAnim === 'zoomShoot') {
-      if (isShooting && ammo > 0) { frame = 0; showImg(list[0]); }
+      if (isShooting && ammo > 0) { frame = 0; shotParity ^= 1; showImg(shotParity ? list[0] : VMI[curW][idleOrZoom()][0]); }
       else play(idleOrZoom());
       return;
     }
@@ -2612,6 +2632,7 @@ function shoot() {
   ammo--;
   updateAmmo();
   play(isZooming && VMI[curW].zoomShoot ? 'zoomShoot' : 'shoot');
+  vmFireFX();
   sfx(curW === 'shotgun' ? 'sgShoot' : 'rifleShoot', { vol: curW === 'shotgun' ? 1.25 : 1.35, rate: 0.94 + Math.random() * 0.12 });   // LOUDER shots
   for (let p = 0; p < W.PELLETS; p++) spawnBullet(W.SPREAD);
 
