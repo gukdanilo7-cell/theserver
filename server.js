@@ -19,6 +19,11 @@ const { WebSocketServer, WebSocket } = require('ws');
 const PORT = process.env.PORT || 8765;
 const ROOM_LEN = 6;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без 0/O/1/I
+// MONO v8: ігрові події спільних ворогів — сервер просто ретранслює їх усім іншим у кімнаті
+// (eny/wsp/espn/ekill — стан бою від хоста; ehit/vhit/bhit — влучання пірів; pdmg/orb/bsh — шкода/снаряди;
+//  bst/bsp/vst/vsp/vdead — боси; alldead/wclr — кінець матчу / очищення арени)
+const GAME_RELAY = new Set(['eny', 'wsp', 'espn', 'ekill', 'ehit', 'pdmg', 'orb', 'bsh', 'bst', 'bsp',
+  'vst', 'vsp', 'vhit', 'vdead', 'bhit', 'alldead', 'wclr']);
 
 // ---------- HTTP (health check + роздача гри, якщо index.html поруч) ----------
 const server = http.createServer((req, res) => {
@@ -167,9 +172,10 @@ wss.on('connection', (ws) => {
         const room = rooms.get(info.room);
         if (!room) break;
         if (room.hostId !== info.id) { send(ws, { t: 'err', msg: 'Only host can start' }); break; }
-        log(`room ${info.room}: start map=${msg.map} mode=${msg.mode}`);
-        relayOthers(info.room, info.id, { t: 'start', map: msg.map, mode: msg.mode });
-        send(ws, { t: 'start', map: msg.map, mode: msg.mode });
+        log(`room ${info.room}: start map=${msg.map} mode=${msg.mode} diff=${msg.diff || '?'}`);
+        // diff проходить наскрізь (старі клієнти його ігнорують; нові читають, і дублюють його в mode)
+        relayOthers(info.room, info.id, { t: 'start', map: msg.map, mode: msg.mode, diff: msg.diff });
+        send(ws, { t: 'start', map: msg.map, mode: msg.mode, diff: msg.diff });
         break;
       }
 
@@ -190,6 +196,15 @@ wss.on('connection', (ws) => {
           x: msg.x, y: msg.y, z: msg.z,
           dx: msg.dx, dy: msg.dy, dz: msg.dz, w: msg.w
         });
+        break;
+      }
+
+      default: {
+        // MONO v8: ретрансляція ігрових подій спільних ворогів (+ f = id відправника для зарахування вбивств)
+        if (info.room && GAME_RELAY.has(msg.t)) {
+          msg.f = info.id;
+          relayOthers(info.room, info.id, msg);
+        }
         break;
       }
     }
