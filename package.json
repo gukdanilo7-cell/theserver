@@ -1,0 +1,16 @@
+{
+  "name": "mono-coop-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MONO co-op WebSocket relay server (Render.com ready)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
